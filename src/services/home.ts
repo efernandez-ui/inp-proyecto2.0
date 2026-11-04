@@ -94,6 +94,10 @@ export async function getHomeBanners(): Promise<HomeBannersResponse> {
 }
 
 export async function getHomePopups(): Promise<HomePopupsResponse> {
+  if (process.env.NEXT_PUBLIC_STATIC_SITE === 'true') {
+    return { popups: [] };
+  }
+
   const response = await fetch(`${API_BASE_URL}/public/home/popups`, {
     headers: { 'Content-Type': 'application/json' },
   });

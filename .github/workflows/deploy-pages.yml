@@ -41,15 +41,16 @@ jobs:
         run: |
           rm -rf \
             "src/app/api" \
-            "src/app/catalogo" \
             "src/app/producto/[id]" \
             "src/app/admin/ventas-especiales/[nrpool]"
+          cp scripts/pages/catalogo-static-page.tsx src/app/catalogo/page.tsx
 
       - name: Build static site
         run: npm run build
         env:
           GITHUB_PAGES: 'true'
           GITHUB_PAGES_BASE_PATH: /inp-proyecto2.0
+          NEXT_PUBLIC_STATIC_SITE: 'true'
 
       - name: Prefix public assets for the project Pages URL
         run: node scripts/prefix-github-pages-assets.mjs
