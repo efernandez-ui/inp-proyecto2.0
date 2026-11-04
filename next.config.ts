@@ -1,6 +1,15 @@
 /** @type {import('next').NextConfig} */
+const isGitHubPages = process.env.GITHUB_PAGES === 'true'
+const githubPagesBasePath = process.env.GITHUB_PAGES_BASE_PATH || '/inp-proyecto2.0'
+
 const nextConfig = {
+  ...(isGitHubPages && {
+    output: 'export',
+    basePath: githubPagesBasePath,
+    trailingSlash: true,
+  }),
   images: {
+    unoptimized: isGitHubPages,
     remotePatterns: [
       {
         protocol: 'https',
@@ -16,7 +25,7 @@ const nextConfig = {
       },
     ],
   },
-  output: 'standalone',
+  ...(!isGitHubPages && { output: 'standalone' }),
 }
 
 module.exports = nextConfig

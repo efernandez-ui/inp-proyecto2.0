@@ -1,0 +1,66 @@
+name: Deploy static site to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Exclude routes that require a Next.js server
+        run: |
+          rm -rf \
+            "src/app/api" \
+            "src/app/catalogo" \
+            "src/app/producto/[id]" \
+            "src/app/admin/ventas-especiales/[nrpool]"
+
+      - name: Build static site
+        run: npm run build
+        env:
+          GITHUB_PAGES: 'true'
+          GITHUB_PAGES_BASE_PATH: /inp-proyecto2.0
+
+      - name: Prefix public assets for the project Pages URL
+        run: node scripts/prefix-github-pages-assets.mjs
+        env:
+          GITHUB_PAGES_BASE_PATH: /inp-proyecto2.0
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: out
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

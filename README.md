@@ -84,3 +84,9 @@ npx cross-env PORT=4000 npm run dev
 ```
 
 Next.js carga automáticamente variables de archivos `.env*` (ver docs: https://nextjs.org/docs/basic-features/environment-variables).
+
+## Publicación en GitHub Pages
+
+El workflow `.github/workflows/deploy-pages.yml` genera y publica una exportación estática al hacer push a `main` (también se puede ejecutar manualmente desde Actions). Para habilitar la primera publicación, configura **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+
+La página se publicará en `https://efernandez-ui.github.io/inp-proyecto2.0/`. GitHub Pages no ejecuta el servidor de Next.js: el workflow excluye las rutas de API, el catálogo con búsqueda dinámica y las páginas dinámicas de detalle de producto y edición de ventas especiales. Las funciones que dependen del backend (por ejemplo, autenticación, carrito, pedidos y administración) no estarán operativas en esta publicación estática. La configuración de Docker y la ejecución normal del proyecto siguen usando el servidor Next.js.
