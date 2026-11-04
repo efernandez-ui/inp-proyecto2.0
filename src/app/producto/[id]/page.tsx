@@ -1,0 +1,1165 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
+import { getProductById, fetchSustitutos, fetchRelacionados } from '@/services/products'
+import { ProductoDTO, AplicacionDTO } from '@/interfaces/producto'
+import ProductGalleryModal from '@/components/catalog/ProductGalleryModal'
+import ProductPools from '@/components/catalog/ProductPools'
+import AplicacionesMotocicletaModal from '@/components/catalog/AplicacionesMotocicletaModal'
+import ProductVinculadosGrid from '@/components/catalog/ProductVinculadosGrid'
+import { useSelector, useDispatch } from 'react-redux'
+import { RootState, AppDispatch } from '@/store'
+import { useCurrency } from '@/hooks/useCurrencyPreference'
+import { useCatalogUI } from '@/context/CatalogUIContext'
+import { addItemToBackend, fetchActiveCart, removeItemFromBackend } from '@/store/cartSlice'
+import { useSyncedCartQuantity } from '@/hooks/useSyncedCartQuantity'
+import { useSyncedBonif2FromCart } from '@/hooks/useSyncedBonif2FromCart'
+import { favoriteKey, setFavoriteLocal, toggleFavorite } from '@/store/favoritesSlice'
+import { ProductUI } from '@/models/ProductUI'
+import { unidadPresentacionLabel, pesoPresentacionLabel } from '@/utils/productPresentacionLabels'
+import { toast } from 'react-toastify'
+import { ArrowLeft, ArrowRight, Bike, Heart, Link2, Loader2, Play, RotateCcw, ShoppingCart, Trash2 } from 'lucide-react'
+import clsx from 'clsx'
+import OfertaPrecioDisplay from '@/components/catalog/OfertaPrecioDisplay'
+import DescuentoCornerBadges from '@/components/catalog/DescuentoCornerBadges'
+import NuevoProductBadge from '@/components/catalog/NuevoProductBadge'
+import { resolveOfertaPrecios, debeMostrarPrecioPromocional } from '@/utils/ofertaPrecios'
+import { resolvePreciosMoneda, calcularPrecioPublico, tienePrecioListaVisible } from '@/utils/productoPrecios'
+import { isProductoNuevo } from '@/utils/productoNuevo'
+import { isValidProductImageUrl, PRODUCT_PLACEHOLDER, PRODUCT_PLACEHOLDER_SMALL } from '@/utils/productImage'
+import BranchStockDisplay from '@/components/catalog/BranchStockDisplay'
+import { CART_READONLY_CODE } from '@/services/cart'
+
+type VideoSlide = { url: string; poster?: string }
+
+function buildVideoSlides(product: ProductoDTO): VideoSlide[] {
+    const raw = product.videos
+    if (!Array.isArray(raw)) return []
+    const out: VideoSlide[] = []
+    for (const item of raw) {
+        if (typeof item === 'string') {
+            const u = item.trim()
+            if (u) out.push({ url: u })
+        } else if (item && typeof item === 'object') {
+            const o = item as Record<string, string | null | undefined>
+            const url = String(o.url || o.path || '').trim()
+            if (url) {
+                const posterRaw = o.thumbnailUrl || o.poster
+                const poster = typeof posterRaw === 'string' && posterRaw.trim() ? posterRaw.trim() : undefined
+                out.push({ url, poster })
+            }
+        }
+    }
+    return out
+}
+
+type MediaSlide =
+    | { kind: 'image'; imageIndex: number }
+    | { kind: 'video'; url: string; poster?: string }
+
+function normalizeTextValue(value: unknown): string {
+    if (value == null) return ''
+    return String(value).trim()
+}
+
+function normalizeNullableText(value: unknown): string | null {
+    const normalized = normalizeTextValue(value)
+    return normalized.length > 0 ? normalized : null
+}
+
+/** Nombre del atributo como en USR_PRATRI (mayúsculas, acentos y unidades), solo cambia "_" por espacio. */
+function formatAttributeLabel(key: string): string {
+    return key.replace(/_+/g, ' ').trim()
+}
+
+function isYoutubeEmbedUrl(url: string | undefined): boolean {
+    if (!url) return false
+    const normalized = url.trim().toLowerCase()
+    return normalized.includes('youtube.com/embed/') || normalized.includes('youtu.be/')
+}
+
+export default function ProductDetailPage() {
+    const params = useParams()
+    const router = useRouter()
+    const searchParams = useSearchParams()
+    const { id } = params as { id: string }
+    const urlNrocta = searchParams?.get('nrocta')
+
+    // Parse tippro and artcod from URL (new format: tipproartcod without dash, e.g., 001001010031)
+    // For backward compatibility, also support old format: tippro-artcod (e.g., 001-001010031)
+    const parseId = (id: string): [string, string] => {
+        if (!id) return ['', ''];
+
+        // Try new format first: first 3 chars = tippro, rest = artcod
+        if (id.length >= 3) {
+            const tippro = id.substring(0, 3);
+            const artcod = id.substring(3);
+            if (artcod.length > 0) {
+                return [tippro, artcod];
+            }
+        }
+
+        // Fallback to old format: split by dash
+        const parts = id.split('-');
+        if (parts.length >= 2) {
+            return [parts[0], parts.slice(1).join('')];
+        }
+
+        return ['', id];
+    };
+
+    const [tippro, artcod] = parseId(id || '')
+
+    const [product, setProduct] = useState<ProductoDTO | null>(null)
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState<string | null>(null)
+    const [showGallery, setShowGallery] = useState(false)
+    const [galleryIndex, setGalleryIndex] = useState(0)
+    const [aplicacionesQuery, setAplicacionesQuery] = useState('')
+    const [sustitutos, setSustitutos] = useState<ProductoDTO[]>([])
+    const [relacionados, setRelacionados] = useState<ProductoDTO[]>([])
+
+    const { isLoggedIn, selectedClient, user } = useSelector((state: RootState) => state.auth)
+    const { activeCartId, loading: cartLoading, items: cartItems } = useSelector((state: RootState) => state.cart)
+    const favoritesKeys = useSelector((state: RootState) => state.favorites.keys)
+    const dispatch = useDispatch<AppDispatch>()
+    const { currency, setCurrency } = useCurrency()
+    const { markupPercentage, showPurchasePrice, showPublicPrice } = useCatalogUI()
+    const [isAdding, setIsAdding] = useState(false)
+    const [isRemoving, setIsRemoving] = useState(false)
+    const [aplicacionesModalOpen, setAplicacionesModalOpen] = useState(false)
+    const [selectedMediaIndex, setSelectedMediaIndex] = useState(0)
+
+    // Verificar si el producto ya está en el carrito
+    const cartItem = cartItems.find(item =>
+        item.tippro.trim() === (tippro || '').trim() &&
+        item.artcod.trim() === (artcod || '').trim()
+    )
+    const isInCart = !!cartItem
+
+    const productKey = product
+        ? `${(product.tippro || '').trim()}-${(product.artcod || '').trim()}`
+        : ''
+    const { bonif2, setBonif2FromUi, isUpdatingBonif2 } = useSyncedBonif2FromCart({
+        isInCart,
+        cartBonificacion2: cartItem?.bonificacion2,
+        cartItemId: cartItem?.itemId,
+        activeCartId: activeCartId ?? undefined,
+        catalogBonificacion2: product?.bonificacion2 ?? null,
+        productKey,
+    })
+
+    const { quantity, setQuantityFromUi, isUpdatingQty } = useSyncedCartQuantity({
+        isInCart,
+        cartItemId: cartItem?.itemId,
+        cartQuantity: cartItem?.quantity,
+        activeCartId: activeCartId ?? undefined,
+    })
+
+    const favKey = favoriteKey(tippro || '', artcod || '')
+    const isFav = !!favoritesKeys[favKey]
+    const handleToggleFavorite = async () => {
+        if (!isLoggedIn) {
+            toast.info('Iniciá sesión para agregar a favoritos')
+            return
+        }
+        const token = localStorage.getItem('authToken')
+        if (!token) {
+            toast.error('La sesión ha expirado')
+            return
+        }
+        const nextIsFavorite = !isFav
+        dispatch(setFavoriteLocal({ key: favKey, isFavorite: nextIsFavorite }))
+        try {
+            await dispatch(toggleFavorite({ token, tippro: tippro || '', artcod: artcod || '', nextIsFavorite })).unwrap()
+            toast.success(nextIsFavorite ? 'Producto agregado a favoritos' : 'Producto eliminado de favoritos')
+        } catch {
+            dispatch(setFavoriteLocal({ key: favKey, isFavorite: isFav }))
+            toast.error('No se pudo actualizar favoritos')
+        }
+    }
+
+    const handleAddToCart = async () => {
+        const token = localStorage.getItem('authToken')
+        if (!isLoggedIn || !token) {
+            toast.error('Debe iniciar sesión para agregar al carrito')
+            return
+        }
+
+        if (!product) return
+
+        // Validar que el vendedor/admin haya seleccionado un cliente
+        const isStaff = user?.tipo === 'V' || user?.tipo === 'A' || user?.tipo === 'S' || user?.tipo === 'B'
+        if (isStaff && !selectedClient) {
+            toast.warning('Debe seleccionar un cliente antes de agregar productos', {
+                position: "top-center",
+                theme: "colored"
+            })
+            return
+        }
+
+        setIsAdding(true)
+        try {
+            let currentCartId = activeCartId
+
+            if (!currentCartId) {
+                const activeCart = await dispatch(fetchActiveCart({
+                    token,
+                    nrocta: selectedClient?.nrocta
+                })).unwrap()
+                currentCartId = activeCart?.nrofor
+            }
+
+            if (currentCartId) {
+                // Mapear ProductoDTO a ProductUI para el thunk
+                const productUI: ProductUI = {
+                    ...product as any,
+                    tippro: product.tippro || '',
+                    artcod: product.artcod || '',
+                    descripcion: product.descripcion || '',
+                    images: product.imagenes || []
+                }
+
+                await dispatch(addItemToBackend({
+                    cartId: currentCartId,
+                    product: productUI,
+                    quantity,
+                    token,
+                    nrocta: selectedClient?.nrocta,
+                    bonificacion2: (user?.tipo === 'V' || user?.tipo === 'A' || user?.tipo === 'S' || user?.tipo === 'B') && bonif2 !== 0
+                        ? -Math.abs(bonif2)
+                        : undefined
+                })).unwrap()
+                toast.success(`${product.descripcion} agregado al carrito`, {
+                    position: "bottom-right",
+                    autoClose: 2000,
+                    theme: "colored",
+                })
+            }
+        } catch (error) {
+            if ((error as { code?: string } | null)?.code === CART_READONLY_CODE) return // ya se muestra el modal
+            toast.error('Error al agregar el producto al carrito')
+            console.error(error)
+        } finally {
+            setIsAdding(false)
+        }
+    }
+
+    const handleRemoveFromCart = async () => {
+        const token = localStorage.getItem('authToken')
+        if (!token || !cartItem?.itemId) return
+
+        setIsRemoving(true)
+        try {
+            await dispatch(removeItemFromBackend({
+                cartId: activeCartId!,
+                itemId: cartItem.itemId,
+                token
+            })).unwrap()
+            toast.info(`${product?.descripcion} quitado del carrito`, {
+                position: "bottom-right",
+                autoClose: 2000,
+                theme: "colored",
+            })
+        } catch (error) {
+            toast.error('Error al quitar el producto al carrito')
+            console.error(error)
+        } finally {
+            setIsRemoving(false)
+        }
+    }
+
+    useEffect(() => {
+        const fetchProduct = async () => {
+            try {
+                setLoading(true)
+                // Use nrocta from URL if present (from vendor search), otherwise from selectedClient
+                const effectiveNrocta = urlNrocta || selectedClient?.nrocta
+                const data = await getProductById(tippro || '', artcod || '', effectiveNrocta || undefined)
+                if (!data) {
+                    setError('Producto no encontrado')
+                } else {
+                    setProduct(data)
+                }
+            } catch (err) {
+                setError('Error al cargar el producto')
+                console.error(err)
+            } finally {
+                setLoading(false)
+            }
+        }
+
+        if (tippro && artcod) fetchProduct()
+    }, [tippro, artcod, urlNrocta, selectedClient?.nrocta])
+
+    useEffect(() => {
+        setSelectedMediaIndex(0)
+    }, [tippro, artcod])
+
+    useEffect(() => {
+        if (!tippro || !artcod) return
+        const effectiveNrocta = urlNrocta || selectedClient?.nrocta || undefined
+        let cancelled = false
+        setSustitutos([])
+        setRelacionados([])
+        fetchSustitutos(tippro, artcod, effectiveNrocta).then((r) => { if (!cancelled) setSustitutos(r) })
+        fetchRelacionados(tippro, artcod, effectiveNrocta).then((r) => { if (!cancelled) setRelacionados(r) })
+        return () => { cancelled = true }
+    }, [tippro, artcod, urlNrocta, selectedClient?.nrocta])
+
+    if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-600"></div></div>
+    if (error || !product) return <div className="min-h-screen flex flex-col items-center justify-center gap-4"><h1 className="text-2xl font-bold">{error || 'Error'}</h1><button onClick={() => router.back()} className="px-4 py-2 bg-blue-600 text-white rounded">Volver</button></div>
+
+    // Función para obtener imagen con fallback a imagen genérica
+    // (rechaza vacíos, "null" y URLs ".../null.jpg")
+    const getImageWithFallback = (imgPath: string | null | undefined, isPrimary: boolean = false): string => {
+        if (!isValidProductImageUrl(imgPath)) {
+            return isPrimary
+                ? PRODUCT_PLACEHOLDER
+                : PRODUCT_PLACEHOLDER_SMALL
+        }
+        return imgPath
+    }
+
+    // Construir array de imágenes con fallback
+    const buildImagesArray = (product: ProductoDTO) => {
+        const imagesArray: { pathImagenChica: string; pathImagenGrande: string }[] = []
+
+        // Si tiene array de imágenes
+        if (product.imagenes && Array.isArray(product.imagenes) && product.imagenes.length > 0) {
+            return product.imagenes.map(img => ({
+                pathImagenChica: getImageWithFallback(img.pathImagenChica || img.pathImagenGrande),
+                pathImagenGrande: getImageWithFallback(img.pathImagenGrande || img.pathImagenChica, true)
+            }))
+        }
+
+        // Si tiene imgchi
+        if (isValidProductImageUrl(product.imgchi)) {
+            imagesArray.push({
+                pathImagenChica: getImageWithFallback(product.imgchi),
+                pathImagenGrande: getImageWithFallback(product.imggra || product.imgchi, true)
+            })
+        }
+
+        // Si no tiene ninguna imagen, agregar placeholder
+        if (imagesArray.length === 0) {
+            imagesArray.push({
+                pathImagenChica: PRODUCT_PLACEHOLDER_SMALL,
+                pathImagenGrande: PRODUCT_PLACEHOLDER
+            })
+        }
+
+        return imagesArray
+    }
+
+    const images = buildImagesArray(product)
+    const videoSlides = buildVideoSlides(product)
+    const mediaSlides: MediaSlide[] = [
+        ...images.map((_, imageIndex) => ({ kind: 'image' as const, imageIndex })),
+        ...videoSlides.map((v) => ({ kind: 'video' as const, url: v.url, poster: v.poster })),
+    ]
+    const safeMediaIdx = Math.min(
+        Math.max(0, selectedMediaIndex),
+        Math.max(0, mediaSlides.length - 1)
+    )
+    const currentSlide = mediaSlides[safeMediaIdx] ?? mediaSlides[0]
+    const mainImageSrc =
+        currentSlide?.kind === 'image'
+            ? images[currentSlide.imageIndex]?.pathImagenGrande || '/images/placeholder-generic.svg'
+            : images[0]?.pathImagenGrande || '/images/placeholder-generic.svg'
+
+    const esUSD = product.moneda === 'USD'
+    const precioFinalARS = product.precioFinalPeso || 0
+    const precioFinalUSD = product.precioFinalDolar
+    const bonificacion = product.bonificacion ? Math.abs(Number(product.bonificacion)) : 0
+
+    const {
+        monedaAMostrar,
+        simboloMoneda,
+        tipoCambio,
+        precioMostrar,
+        precioListaMostrar,
+    } = resolvePreciosMoneda({
+        monedaProducto: product.moneda,
+        currency,
+        precioFinalPeso: precioFinalARS,
+        precioFinalDolar: precioFinalUSD,
+        precioReferencia: product.precioReferencia,
+        cotizacionUSD: product.cotizacionUSD,
+    })
+
+    const format = (val: number) =>
+        new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val)
+
+    const ofertaPrecios = resolveOfertaPrecios({
+        enOferta: product.enOferta,
+        itemProductoVentaEspeciales: product.itemProductoVentaEspeciales,
+        precioMostrar,
+        precioListaMostrar,
+        bonificacion1: bonificacion,
+        bonificacion2: bonif2,
+        quantity,
+        monedaAMostrar,
+        tipoCambio,
+    })
+    const precioMarcadoMostrar = calcularPrecioPublico(precioMostrar, markupPercentage)
+
+    const precioVentaUnitario = ofertaPrecios.precioOfertaUnitario
+    const precioVentaTotal = ofertaPrecios.precioOferta
+    const precioTotalMarcadoMostrar = (precioMarcadoMostrar || 0) * (quantity || 1)
+    const showPrecioPromocional = debeMostrarPrecioPromocional(ofertaPrecios)
+    const badgeModo = ofertaPrecios.modoDescuento === 'oferta'
+        ? 'oferta' as const
+        : bonificacion > 0
+            ? 'bonificacion' as const
+            : 'ninguno' as const
+
+    const openGalleryFromMain = () => {
+        if (currentSlide?.kind !== 'image') return
+        if (images.length <= 1) return
+        setGalleryIndex(currentSlide.imageIndex)
+        setShowGallery(true)
+    }
+
+    const goPrevMedia = (e: React.MouseEvent) => {
+        e.stopPropagation()
+        if (mediaSlides.length <= 1) return
+        setSelectedMediaIndex((i) => (i - 1 + mediaSlides.length) % mediaSlides.length)
+    }
+    const goNextMedia = (e: React.MouseEvent) => {
+        e.stopPropagation()
+        if (mediaSlides.length <= 1) return
+        setSelectedMediaIndex((i) => (i + 1) % mediaSlides.length)
+    }
+
+    const thumbButtonClass = (active: boolean) =>
+        clsx(
+            'relative shrink-0 w-16 h-16 rounded-lg border overflow-hidden transition-all',
+            active ? 'ring-2 ring-blue-600 border-blue-500 shadow-sm' : 'border-gray-200 hover:border-blue-300'
+        )
+
+    const effectiveNrocta = (urlNrocta || selectedClient?.nrocta || '').trim()
+    const hrefCatalogo = (query: Record<string, string>) => {
+        const p = new URLSearchParams()
+        Object.entries(query).forEach(([k, v]) => {
+            if (v) p.set(k, v)
+        })
+        if (effectiveNrocta) p.set('nrocta', effectiveNrocta)
+        const qs = p.toString()
+        return qs ? `/catalogo?${qs}` : '/catalogo'
+    }
+    const hrefInicio = hrefCatalogo({})
+    const tipoTrim = product.tipo?.trim() || ''
+    const subtipoTrim = product.subtipo?.trim() || ''
+    const marcaTrim = product.marca?.trim() || ''
+    const hrefTipo = tipoTrim ? hrefCatalogo({ tipo: tipoTrim }) : null
+    const hrefSubtipo = subtipoTrim
+        ? hrefCatalogo({
+              ...(tipoTrim ? { tipo: tipoTrim } : {}),
+              subtipo: subtipoTrim,
+          })
+        : null
+    const hrefMarca = marcaTrim
+        ? hrefCatalogo({
+              ...(tipoTrim ? { tipo: tipoTrim } : {}),
+              ...(subtipoTrim ? { subtipo: subtipoTrim } : {}),
+              marca: marcaTrim,
+          })
+        : null
+
+    const crumbLinkClass = 'uppercase tracking-wide hover:text-blue-600 transition-colors'
+    const crumbCurrentClass = 'font-bold text-gray-800 uppercase tracking-wide'
+    const aplicacionesNormalizadas: AplicacionDTO[] = Array.isArray(product.aplicaciones)
+        ? product.aplicaciones
+              .map((app) => ({
+                  marca: normalizeNullableText(app?.marca),
+                  modelo: normalizeNullableText(app?.modelo),
+                  version: normalizeNullableText(app?.version),
+                  cilindrada: normalizeNullableText(app?.cilindrada),
+                  tipoMotor: normalizeNullableText(app?.tipoMotor),
+                  adesde: normalizeNullableText(app?.adesde),
+                  ahasta: normalizeNullableText(app?.ahasta),
+                  annios: normalizeNullableText(app?.annios),
+              }))
+              .filter((app) =>
+                  [
+                      app.marca,
+                      app.modelo,
+                      app.version,
+                      app.cilindrada,
+                      app.tipoMotor,
+                      app.adesde,
+                      app.ahasta,
+                      app.annios,
+                  ].some(Boolean)
+              )
+        : []
+    const atributosEntries = Object.entries(product.atributos ?? {})
+        .map(([key, value]) => ({
+            key,
+            label: formatAttributeLabel(key),
+            value: normalizeTextValue(value),
+        }))
+        .filter((attr) => attr.key.trim().length > 0 && attr.value.length > 0)
+    const aplicacionesFiltradas = (() => {
+        const query = normalizeTextValue(aplicacionesQuery).toLowerCase()
+        if (!query) return aplicacionesNormalizadas
+        return aplicacionesNormalizadas.filter((app) =>
+            [
+                app.marca,
+                app.modelo,
+                app.version,
+                app.cilindrada,
+                app.tipoMotor,
+                app.adesde,
+                app.ahasta,
+            ]
+                .map((value) => normalizeTextValue(value).toLowerCase())
+                .join(' ')
+                .includes(query)
+        )
+    })()
+    const caracteristicasEntries = [
+        { label: 'Tipo de producto', value: product.tipo },
+        { label: 'Sub-tipo', value: product.subtipo },
+        { label: 'Origen', value: product.importado === 'S' ? 'Importado' : 'Nacional' },
+        { label: 'Marca', value: product.marca },
+        { label: 'Nro parte', value: product.nroParte },
+        { label: 'Unidad', value: product.unidadMedidaCatalogo || product.unidadMedida?.descripcion },
+    ].filter((item) => normalizeTextValue(item.value).length > 0)
+    const atributosHalf = Math.ceil(atributosEntries.length / 2)
+    const atributosCol1 = atributosEntries.slice(0, atributosHalf)
+    const atributosCol2 = atributosEntries.slice(atributosHalf)
+    const caracteristicasHalf = Math.ceil(caracteristicasEntries.length / 2)
+    const caracteristicasCol1 = caracteristicasEntries.slice(0, caracteristicasHalf)
+    const caracteristicasCol2 = caracteristicasEntries.slice(caracteristicasHalf)
+
+    return (
+        <div className="container mx-auto px-4 py-8 bg-gray-50 min-h-screen">
+            <div className="mb-5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-500">
+                <Link href={hrefInicio} className={crumbLinkClass}>
+                    Inicio
+                </Link>
+                <span className="text-gray-300">/</span>
+                {tipoTrim ? (
+                    <>
+                        <Link href={hrefTipo!} className={crumbLinkClass}>
+                            {product.tipo}
+                        </Link>
+                        <span className="text-gray-300">/</span>
+                    </>
+                ) : null}
+                {subtipoTrim ? (
+                    <>
+                        <Link href={hrefSubtipo!} className={crumbLinkClass}>
+                            {product.subtipo}
+                        </Link>
+                        <span className="text-gray-300">/</span>
+                    </>
+                ) : null}
+                {marcaTrim ? (
+                    <Link href={hrefMarca!} className={clsx(crumbCurrentClass, 'hover:text-blue-600 transition-colors')}>
+                        {product.marca}
+                    </Link>
+                ) : (
+                    <span className={crumbCurrentClass}>Marca</span>
+                )}
+                <span className="ml-auto">
+                    <button type="button" onClick={() => router.back()} className="hover:text-blue-600 flex items-center text-xs font-medium">
+                        <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>
+                        Volver
+                    </button>
+                </span>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-0">
+                    {/* Galería: miniaturas | imagen principal */}
+                    <div className="lg:col-span-7 p-6 lg:p-8 border-b lg:border-b-0 lg:border-r border-gray-100">
+                        <div className="flex flex-col sm:flex-row gap-4 lg:gap-5">
+                            {/* Miniaturas verticales (desktop) */}
+                            <div className="hidden sm:flex flex-col gap-2 w-[72px] shrink-0 max-h-[min(520px,62vh)] overflow-y-auto overflow-x-hidden pr-1">
+                                {mediaSlides.map((slide, idx) => (
+                                    <button
+                                        key={idx}
+                                        type="button"
+                                        onClick={() => setSelectedMediaIndex(idx)}
+                                        className={thumbButtonClass(safeMediaIdx === idx)}
+                                    >
+                                        {slide.kind === 'image' ? (
+                                            <img
+                                                src={getImageWithFallback(
+                                                    images[slide.imageIndex]?.pathImagenChica || images[slide.imageIndex]?.pathImagenGrande
+                                                )}
+                                                alt=""
+                                                className="w-full h-full object-cover"
+                                            />
+                                        ) : (
+                                            <div className="relative w-full h-full bg-gray-900 flex items-center justify-center">
+                                                {slide.poster ? (
+                                                    <img src={slide.poster} alt="" className="absolute inset-0 w-full h-full object-cover opacity-80" />
+                                                ) : null}
+                                                <Play className="w-7 h-7 text-white drop-shadow-md relative z-[1]" fill="currentColor" />
+                                            </div>
+                                        )}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="flex-1 flex flex-col min-w-0">
+                                <div
+                                    className={clsx(
+                                        'relative w-full aspect-square max-w-xl mx-auto bg-white rounded-xl border border-gray-100 overflow-hidden group',
+                                        currentSlide?.kind === 'image' && images.length > 1 ? 'cursor-zoom-in' : 'cursor-default'
+                                    )}
+                                    onClick={openGalleryFromMain}
+                                >
+                                    <div className="absolute left-3 top-3 z-20 hidden sm:flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <IconPill title={isFav ? 'Quitar de favoritos' : 'Agregar a favoritos'} onClick={handleToggleFavorite}>
+                                            <Heart className={isFav ? 'h-4 w-4 text-[#fb923c]' : 'h-4 w-4 text-[#001f3f]'} fill={isFav ? '#fb923c' : 'none'} />
+                                        </IconPill>
+                                        <IconPill title="Volver" onClick={() => router.back()}>
+                                            <RotateCcw className="h-4 w-4 text-[#001f3f]" />
+                                        </IconPill>
+                                        <IconPill
+                                            title="Copiar link"
+                                            onClick={() => {
+                                                void navigator.clipboard?.writeText(window.location.href)
+                                                toast.success('Link copiado')
+                                            }}
+                                        >
+                                            <Link2 className="h-4 w-4 text-[#001f3f]" />
+                                        </IconPill>
+                                        <IconPill title="Aplicaciones por motocicleta" onClick={() => setAplicacionesModalOpen(true)}>
+                                            <Bike className="h-4 w-4 text-[#001f3f]" />
+                                        </IconPill>
+                                    </div>
+
+                                    <DescuentoCornerBadges
+                                        modoDescuento={badgeModo}
+                                        bonificacion1={bonificacion}
+                                        porcentajeOferta={ofertaPrecios.porcentajeOferta}
+                                        size="detail"
+                                        visible={isLoggedIn}
+                                    />
+
+                                    {currentSlide?.kind === 'video' ? (
+                                        isYoutubeEmbedUrl(currentSlide.url) ? (
+                                            <iframe
+                                                key={currentSlide.url}
+                                                src={currentSlide.url}
+                                                title={`Video ${product.descripcion}`}
+                                                className="w-full h-full bg-black"
+                                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                                referrerPolicy="strict-origin-when-cross-origin"
+                                                allowFullScreen
+                                            />
+                                        ) : (
+                                            <video
+                                                key={currentSlide.url}
+                                                src={currentSlide.url}
+                                                poster={currentSlide.poster}
+                                                controls
+                                                playsInline
+                                                className="w-full h-full object-contain bg-black"
+                                            />
+                                        )
+                                    ) : (
+                                        <img
+                                            src={mainImageSrc}
+                                            alt={product.descripcion}
+                                            className="w-full h-full object-contain mix-blend-multiply transition-transform duration-500 group-hover:scale-[1.02]"
+                                        />
+                                    )}
+
+                                    {mediaSlides.length > 1 && (
+                                        <>
+                                            <button
+                                                type="button"
+                                                onClick={goPrevMedia}
+                                                className="absolute left-2 top-1/2 -translate-y-1/2 h-9 w-9 rounded-full bg-white/90 backdrop-blur border border-gray-200 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-sm"
+                                                title="Anterior"
+                                            >
+                                                <ArrowLeft className="h-4 w-4 text-[#001f3f]" />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={goNextMedia}
+                                                className="absolute right-2 top-1/2 -translate-y-1/2 h-9 w-9 rounded-full bg-white/90 backdrop-blur border border-gray-200 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-sm"
+                                                title="Siguiente"
+                                            >
+                                                <ArrowRight className="h-4 w-4 text-[#001f3f]" />
+                                            </button>
+                                            <div className="absolute bottom-3 left-3 bg-black/55 text-white text-[10px] font-black px-2 py-1 rounded-full backdrop-blur-sm z-10">
+                                                {safeMediaIdx + 1}/{mediaSlides.length}
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+
+                                {/* Miniaturas horizontales (móvil) */}
+                                <div className="sm:hidden flex gap-2 mt-3 overflow-x-auto pb-1">
+                                    {mediaSlides.map((slide, idx) => (
+                                        <button
+                                            key={idx}
+                                            type="button"
+                                            onClick={() => setSelectedMediaIndex(idx)}
+                                            className={thumbButtonClass(safeMediaIdx === idx)}
+                                        >
+                                            {slide.kind === 'image' ? (
+                                                <img
+                                                    src={getImageWithFallback(
+                                                        images[slide.imageIndex]?.pathImagenChica || images[slide.imageIndex]?.pathImagenGrande
+                                                    )}
+                                                    alt=""
+                                                    className="w-full h-full object-cover"
+                                                />
+                                            ) : (
+                                                <div className="relative w-full h-full bg-gray-900 flex items-center justify-center">
+                                                    {slide.poster ? (
+                                                        <img src={slide.poster} alt="" className="absolute inset-0 w-full h-full object-cover opacity-80" />
+                                                    ) : null}
+                                                    <Play className="w-6 h-6 text-white relative z-[1]" fill="currentColor" />
+                                                </div>
+                                            )}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                <p className="mt-4 text-center text-[10px] font-semibold tracking-[0.2em] text-gray-400 uppercase">e-biz INTERCAP</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Columna derecha: datos (estilo ProductCard) */}
+                    <div className="lg:col-span-5 p-6 lg:p-8 lg:pl-6 flex flex-col h-full">
+                        <div className="mb-auto">
+                            <div className="mb-1">
+                                <NuevoProductBadge
+                                    visible={isProductoNuevo(product.nuevo)}
+                                    size="detail"
+                                />
+                            </div>
+                            <p className="text-blue-600 text-[10px] font-extrabold uppercase tracking-widest mb-1">{product.marca || 'GENÉRICO'}</p>
+                            <h1 className="text-xl sm:text-2xl font-bold text-gray-900 uppercase leading-snug mb-4">{product.descripcion}</h1>
+
+                            <p className="text-[11px] font-medium text-gray-500 mb-1">Cod:</p>
+                            <p className="mb-5">
+                                <span className="inline-block bg-sky-100 text-gray-900 font-bold text-sm px-2 py-1 rounded-md tracking-wide">
+                                    {product.tippro}
+                                    {product.artcod}
+                                </span>
+                            </p>
+                            {product.nroParte && (
+                                <p className="text-xs text-gray-500 mb-4">
+                                    Part No: <span className="font-semibold text-gray-800">{product.nroParte}</span>
+                                </p>
+                            )}
+
+                            {product.itemProductoVentaEspeciales &&
+                                product.itemProductoVentaEspeciales.length > 0 && (
+                                <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50/40 p-4">
+                                    <h2 className="text-[11px] font-bold uppercase tracking-widest text-amber-900 mb-3">
+                                        Ventas especiales
+                                    </h2>
+                                    <ProductPools
+                                        pools={product.itemProductoVentaEspeciales}
+                                        showCountdown={isLoggedIn}
+                                        enOferta={product.enOferta}
+                                        ofertaPrecios={ofertaPrecios}
+                                    />
+                                </div>
+                            )}
+
+                            {product.presentaciones && product.presentaciones.length > 0 && (
+                                <div className="mb-5 space-y-1">
+                                    {(() => {
+                                        const withBarcode = product.presentaciones!.filter(
+                                            (p) => (p?.codigoBarra ?? '').toString().trim().length > 0
+                                        )
+                                        const list = (withBarcode.length > 0 ? withBarcode : product.presentaciones!).slice(0, 3)
+                                        return list.map((p, i) => (
+                                            <div
+                                                key={`${p?.tipoEnvase ?? 'x'}-${i}`}
+                                                className="px-2 py-0.5 rounded-md bg-gray-50 border border-gray-100 text-[10px] font-bold text-gray-500 w-fit max-w-full"
+                                                title={`Envase ${p.tipoEnvase}${unidadPresentacionLabel(p) ? ` ${unidadPresentacionLabel(p)}` : ''}${p.cantidad != null ? ` ${p.cantidad}` : ''}${product.unidadMedidaCatalogo ? ` ${product.unidadMedidaCatalogo}` : ''}`}
+                                            >
+                                                {i + 1}° Envase
+                                                {unidadPresentacionLabel(p) ? ` ${unidadPresentacionLabel(p)}` : ''}
+                                                {p?.cantidad != null ? ` ${p.cantidad}` : ''}
+                                                {product.unidadMedidaCatalogo ? ` ${product.unidadMedidaCatalogo}` : ''}
+                                                {pesoPresentacionLabel(p) ? ` ${pesoPresentacionLabel(p)}` : ''}
+                                            </div>
+                                        ))
+                                    })()}
+                                </div>
+                            )}
+
+                            {isLoggedIn && (
+                                <div className="flex items-center justify-end mb-4">
+                                    <span className="text-[10px] text-gray-400 mr-2 font-bold uppercase">Moneda:</span>
+                                    <div className="flex bg-gray-100 rounded-lg p-0.5">
+                                        <button
+                                            type="button"
+                                            onClick={() => setCurrency('ARS')}
+                                            className={clsx(
+                                                'px-3 py-1 text-[10px] font-bold rounded transition-colors',
+                                                currency === 'ARS' ? 'bg-[#001f3f] text-white' : 'text-gray-500 hover:text-gray-700'
+                                            )}
+                                        >
+                                            ARS
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setCurrency('USD')}
+                                            className={clsx(
+                                                'px-3 py-1 text-[10px] font-bold rounded transition-colors',
+                                                currency === 'USD' ? 'bg-[#001f3f] text-white' : 'text-gray-500 hover:text-gray-700'
+                                            )}
+                                        >
+                                            USD
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {isLoggedIn ? (
+                                <div className="pt-3 border-t border-gray-100 space-y-3 mb-6">
+                                    {showPurchasePrice && (
+                                        showPrecioPromocional ? (
+                                            <OfertaPrecioDisplay
+                                                oferta={ofertaPrecios}
+                                                simboloMoneda={simboloMoneda}
+                                                format={format}
+                                                quantity={quantity}
+                                                variant="detail"
+                                            />
+                                        ) : (
+                                            <div>
+                                                <p className="text-[9px] text-gray-400 font-bold uppercase tracking-tighter">
+                                                    {quantity > 1 ? `Total (${quantity} u.)` : 'Precio final:'}
+                                                </p>
+                                                <p className="text-2xl sm:text-3xl font-black text-[#0056b3] leading-tight">
+                                                    {simboloMoneda}
+                                                    {format(quantity > 1 ? precioVentaTotal : precioVentaUnitario)}
+                                                </p>
+                                                {quantity > 1 && (
+                                                    <p className="text-[10px] font-bold text-gray-400">
+                                                        Unit.: {simboloMoneda}{format(precioVentaUnitario)}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        )
+                                    )}
+                                    {tienePrecioListaVisible(precioListaMostrar, precioVentaUnitario) && !showPrecioPromocional && (
+                                        <p className="text-[10px] text-gray-400 font-bold uppercase">
+                                            Precio lista:{' '}
+                                            <span className="line-through text-gray-400 font-semibold normal-case text-sm">
+                                                {simboloMoneda}
+                                                {format(precioListaMostrar)}
+                                            </span>
+                                        </p>
+                                    )}
+                                    {showPublicPrice && markupPercentage > 0 && (
+                                        <div className="flex flex-col items-start">
+                                            <span className="text-[9px] font-bold text-gray-400 uppercase">Precio público:</span>
+                                            <span className="flex items-baseline gap-2 flex-wrap">
+                                                <span className="text-[15px] font-bold text-[#fb923c] leading-none">
+                                                    {simboloMoneda}
+                                                    {format(quantity > 1 ? precioTotalMarcadoMostrar : precioMarcadoMostrar)}
+                                                </span>
+                                            </span>
+                                            {quantity > 1 && (
+                                                <span className="text-[10px] font-bold text-gray-400">
+                                                    Unit.: {simboloMoneda}{format(precioMarcadoMostrar)}
+                                                </span>
+                                            )}
+                                        </div>
+                                    )}
+                                    <p className="text-[10px] text-gray-400">
+                                        IVA incluido. Precio sujeto a cambios.
+                                        {esUSD && monedaAMostrar === 'ARS' && precioFinalUSD
+                                            ? ` (≈ US$ ${format(precioFinalUSD)} USD)`
+                                            : null}
+                                        {esUSD && monedaAMostrar === 'USD' ? ` (≈ $ ${format(precioFinalARS)} ARS)` : null}
+                                        {!esUSD && monedaAMostrar === 'USD' ? ` (desde $ ${format(precioFinalARS)} ARS)` : null}
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="py-6 mb-6 bg-gray-50 border border-dashed border-gray-200 rounded-xl text-center">
+                                    <p className="text-gray-600 text-sm mb-2">Iniciá sesión para ver precios.</p>
+                                    <Link href="/?login=1" className="text-[#0056b3] font-bold text-sm hover:underline">
+                                        Ingresar
+                                    </Link>
+                                </div>
+                            )}
+
+                            {isLoggedIn && (
+                                <div className="mb-6">
+                                    {String((product as any).productoAPedido || (product as any).productoApedido || '').toUpperCase() === 'S' ? (
+                                        <p className="text-[11px] text-amber-700 font-semibold mb-2">
+                                            Producto a pedido. Consultar por favor.
+                                        </p>
+                                    ) : null}
+                                    <BranchStockDisplay
+                                        userTipo={user?.tipo}
+                                        verStock={user?.verStock}
+                                        stockList={(product as any).stock}
+                                        stockNoa={product.stockNoa}
+                                        stockNea={product.stockNea}
+                                        stockBue={product.stockBue}
+                                        stockCuy={product.stockCuy}
+                                        variant="table"
+                                    />
+                                    {(() => {
+                                        const raw = (product as { proximoIngreso?: string | null }).proximoIngreso;
+                                        if (!raw) return null;
+                                        const d = new Date(raw);
+                                        if (Number.isNaN(d.getTime())) return null;
+                                        const label = d.toLocaleDateString('es-AR', {
+                                            day: '2-digit',
+                                            month: '2-digit',
+                                            year: 'numeric',
+                                        });
+                                        return (
+                                            <div className="mt-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-sky-900">
+                                                <span className="font-bold">Próximo ingreso: </span>
+                                                {label}
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+                            )}
+                        </div>
+
+                        {isLoggedIn && ['V', 'A', 'S', 'B'].includes(user?.tipo || '') && (
+                            <div className="flex items-center justify-between px-1 mb-3">
+                                <span className="text-[10px] font-bold text-gray-400 uppercase">Bonificación %:</span>
+                                <input
+                                    type="number"
+                                    min={0}
+                                    step={0.01}
+                                    value={bonif2}
+                                    disabled={isAdding || isRemoving || isUpdatingBonif2}
+                                    onChange={(e) => setBonif2FromUi(Number(e.target.value))}
+                                    className="w-14 h-7 border border-gray-200 rounded-md text-center font-bold text-red-600 text-xs outline-none focus:border-red-400 disabled:cursor-not-allowed disabled:opacity-60"
+                                />
+                            </div>
+                        )}
+
+                        <div className="mt-auto flex flex-col gap-3">
+                            {isLoggedIn && (
+                                <div className="flex gap-2 items-stretch">
+                                    <button
+                                        type="button"
+                                        onClick={isInCart ? handleRemoveFromCart : handleAddToCart}
+                                        disabled={isAdding || isRemoving || cartLoading || isUpdatingQty}
+                                        className={clsx(
+                                            'flex-grow min-h-[44px] rounded-xl flex items-center justify-center gap-2 text-[11px] font-bold uppercase tracking-wide transition-all active:scale-[0.98] shadow-sm disabled:opacity-50 disabled:cursor-not-allowed',
+                                            isInCart
+                                                ? 'bg-orange-50 text-orange-600 border border-orange-100 hover:bg-orange-100'
+                                                : 'bg-[#0056b3] text-white hover:bg-[#004085]'
+                                        )}
+                                    >
+                                        {isAdding || isRemoving ? (
+                                            <Loader2 className="animate-spin" size={18} />
+                                        ) : isInCart ? (
+                                            <>
+                                                <Trash2 size={16} /> Quitar
+                                            </>
+                                        ) : (
+                                            <>
+                                                <ShoppingCart size={16} /> Agregar al carrito
+                                            </>
+                                        )}
+                                    </button>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        value={quantity}
+                                        onChange={(e) => setQuantityFromUi(parseInt(e.target.value, 10) || 1)}
+                                        disabled={isAdding || isRemoving || cartLoading || isUpdatingQty}
+                                        className="w-14 h-11 border border-gray-100 bg-gray-50 rounded-xl text-center font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-60"
+                                    />
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <section className="mt-8 bg-white rounded-xl shadow-sm border border-gray-100 p-6 lg:p-8">
+                <h2 className="text-3xl font-extrabold text-gray-900 mb-4">Descripción</h2>
+                <p className="text-gray-700 text-sm leading-7">{product.descripcion}</p>
+                <div className="mt-4 text-sm text-gray-600 leading-7">
+                    <p>
+                        Este producto forma parte del catálogo técnico INTERCAP. Verifique compatibilidad por medida, uso y
+                        aplicación antes de realizar la compra.
+                    </p>
+                </div>
+            </section>
+
+            <section className="mt-6 grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 lg:p-6">
+                    <h3 className="text-lg font-medium text-gray-700 mb-4 border-b pb-2">
+                        Aplicaciones por Motocicleta
+                    </h3>
+                    <input
+                        type="search"
+                        value={aplicacionesQuery}
+                        onChange={(e) => setAplicacionesQuery(e.target.value)}
+                        placeholder="Buscar por marca, modelo o cilindrada..."
+                        className="w-full rounded-lg border border-gray-200 px-4 py-2.5 text-sm text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
+                    />
+                    <div className="mt-4 border border-gray-200 rounded-lg overflow-hidden">
+                        {aplicacionesNormalizadas.length === 0 ? (
+                            <div className="p-8 text-center text-sm text-gray-500">
+                                No hay aplicaciones cargadas para este producto.
+                            </div>
+                        ) : aplicacionesFiltradas.length === 0 ? (
+                            <div className="p-8 text-center text-sm text-gray-500">
+                                No hay resultados para &ldquo;{normalizeTextValue(aplicacionesQuery)}&rdquo;.
+                            </div>
+                        ) : (
+                            <div className="overflow-auto max-h-[520px]">
+                                <table className="w-full text-sm border-collapse">
+                                    <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_rgb(229,231,235)]">
+                                        <tr>
+                                            {(['Marca', 'Modelo', 'Cilindrada', 'Versión', 'Desde', 'Hasta'] as const).map((h) => (
+                                                <th
+                                                    key={h}
+                                                    className="text-center font-bold text-gray-700 text-sm px-2 py-2 border-b border-gray-200 bg-gray-50/95"
+                                                >
+                                                    {h}
+                                                </th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {aplicacionesFiltradas.map((app, idx) => (
+                                            <tr key={`${app.marca}-${app.modelo}-${app.cilindrada}-${idx}`} className="border-b border-gray-200 hover:bg-gray-50/80">
+                                                <td className="align-middle text-center p-2 text-gray-900 font-medium border-r border-gray-100">{app.marca || '—'}</td>
+                                                <td className="align-middle text-center p-2 text-gray-800 border-r border-gray-100">{app.modelo || '—'}</td>
+                                                <td className="align-middle text-center p-2 text-gray-800 border-r border-gray-100">{app.cilindrada || '—'}</td>
+                                                <td className="align-middle text-center p-2 text-gray-800 border-r border-gray-100">{app.version || '—'}</td>
+                                                <td className="align-middle text-center p-2 text-gray-800 tabular-nums">{app.adesde || '—'}</td>
+                                                <td className="align-middle text-center p-2 text-gray-800 tabular-nums">{app.ahasta || '—'}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <div className="space-y-6">
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 lg:p-6">
+                        <h3 className="text-lg font-medium text-gray-700 mb-4 border-b pb-2">Atributos</h3>
+                        {atributosEntries.length > 0 ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+                                <div className="space-y-2">
+                                    {atributosCol1.map((attr) => (
+                                        <div key={attr.key} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 text-sm py-1">
+                                            <span className="uppercase text-xs text-gray-500">{attr.label}:</span>
+                                            <span className="font-medium text-gray-800">{attr.value}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="space-y-2 md:border-l md:border-gray-200 md:pl-6">
+                                    {atributosCol2.map((attr) => (
+                                        <div key={attr.key} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 text-sm py-1">
+                                            <span className="uppercase text-xs text-gray-500">{attr.label}:</span>
+                                            <span className="font-medium text-gray-800">{attr.value}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : (
+                            <p className="text-sm text-gray-500 italic">No hay atributos técnicos cargados.</p>
+                        )}
+                    </div>
+
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 lg:p-6">
+                        <h3 className="text-lg font-medium text-gray-700 mb-4 border-b pb-2">Características</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+                            <div className="space-y-2">
+                                {caracteristicasCol1.map((item) => (
+                                    <div key={item.label} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 text-sm py-1">
+                                        <span className="capitalize text-gray-500">{item.label}:</span>
+                                        <span className="font-medium text-gray-800">{item.value}</span>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="space-y-2 md:border-l md:border-gray-200 md:pl-6">
+                                {caracteristicasCol2.map((item) => (
+                                    <div key={item.label} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 text-sm py-1">
+                                        <span className="capitalize text-gray-500">{item.label}:</span>
+                                        <span className="font-medium text-gray-800">{item.value}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            {sustitutos.length > 0 && (
+                <section className="mt-6 bg-white rounded-xl shadow-sm border border-gray-100 p-6 lg:p-8">
+                    <h2 className="text-3xl font-extrabold text-gray-900 mb-4">Sustitutos</h2>
+                    <ProductVinculadosGrid products={sustitutos} embeddedInVinculados />
+                </section>
+            )}
+
+            {relacionados.length > 0 && (
+                <section className="mt-6 bg-white rounded-xl shadow-sm border border-gray-100 p-6 lg:p-8">
+                    <h2 className="text-3xl font-extrabold text-gray-900 mb-4">Relacionados</h2>
+                    <ProductVinculadosGrid products={relacionados} embeddedInVinculados />
+                </section>
+            )}
+
+            {showGallery && (
+                <ProductGalleryModal
+                    images={images}
+                    initialIndex={galleryIndex}
+                    onClose={() => setShowGallery(false)}
+                />
+            )}
+
+            <AplicacionesMotocicletaModal
+                isOpen={aplicacionesModalOpen}
+                onClose={() => setAplicacionesModalOpen(false)}
+                aplicaciones={aplicacionesNormalizadas}
+            />
+        </div>
+    )
+}
+
+function IconPill({ title, children, onClick }: { title: string; children: React.ReactNode; onClick?: () => void }) {
+    return (
+        <button
+            type="button"
+            title={title}
+            className="h-8 w-8 rounded-full bg-white/90 backdrop-blur shadow border border-white/60 flex items-center justify-center hover:bg-white transition-colors"
+            onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onClick?.()
+            }}
+        >
+            {children}
+        </button>
+    )
+}
+
+function DetailRow({ label, value }: { label: string, value: any }) {
+    if (!value) return null;
+    return (
+        <div className="flex border-b border-gray-100 py-3">
+            <span className="w-1/3 text-gray-500 font-medium text-sm">{label}</span>
+            <span className="w-2/3 text-gray-900 font-semibold text-sm">{value}</span>
+        </div>
+    )
+}

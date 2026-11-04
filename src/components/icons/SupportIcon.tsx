@@ -1,0 +1,1 @@
+export function SupportIcon() {    return (        <svg viewBox="0 0 64 64" className="w-full h-full">            <circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" strokeWidth="3" />            <path d="M20 34v6M44 34v6" stroke="currentColor" strokeWidth="3" />        </svg>    )}

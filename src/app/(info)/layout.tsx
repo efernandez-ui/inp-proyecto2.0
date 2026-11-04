@@ -1,0 +1,1 @@
+import React from 'react';import InfoLayout from '@/components/layout/InfoLayout';export const metadata = {    title: 'Información',};export default function InfoGroupLayout({ children }: { children: React.ReactNode }) {    return (        <InfoLayout>            {children}        </InfoLayout>    );}

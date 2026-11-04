@@ -1,0 +1,1 @@
+import React from 'react';const InfoUtilPage: React.FC = () => {    return (        <div>            <h1>Información útil</h1>            <p>Contenido de la página de Información útil.</p>        </div>    );};export default InfoUtilPage;

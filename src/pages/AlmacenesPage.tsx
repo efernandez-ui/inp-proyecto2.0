@@ -1,0 +1,1 @@
+import React from 'react';const AlmacenesPage: React.FC = () => {    return (        <div>            <h1>Almacenes</h1>            <p>Contenido de la página de Almacenes.</p>        </div>    );};export default AlmacenesPage;

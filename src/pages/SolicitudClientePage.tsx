@@ -1,0 +1,1 @@
+import React from 'react';const SolicitudClientePage: React.FC = () => {    return (        <div>            <h1>Quiero ser cliente</h1>            <p>Contenido de la página de Quiero ser cliente.</p>        </div>    );};export default SolicitudClientePage;

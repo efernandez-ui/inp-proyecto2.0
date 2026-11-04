@@ -1,0 +1,1 @@
+export { CatalogIcon } from './CatalogIcon'export { SalesIcon } from './SalesIcon'export { SupportIcon } from './SupportIcon'export { PaymentIcon } from './PaymentIcon'export { BadgeIcon } from './BadgeIcon'export { BoxIcon } from './BoxIcon'export { LogisticsIcon } from './LogisticsIcon'export { AutomationIcon } from './AutomationIcon'

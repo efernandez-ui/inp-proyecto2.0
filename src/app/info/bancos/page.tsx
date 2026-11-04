@@ -1,0 +1,1 @@
+import React from 'react';import BancosPage from '@/pages/BancosPage';export default function BancosRoutePage() {  return <BancosPage />;}

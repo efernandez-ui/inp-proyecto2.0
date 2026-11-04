@@ -1,0 +1,1 @@
+export function BoxIcon() {    return (        <svg viewBox="0 0 64 64" className="w-full h-full">            <rect x="12" y="20" width="40" height="28" fill="none" stroke="currentColor" strokeWidth="3" />            <line x1="32" y1="20" x2="32" y2="48" stroke="currentColor" strokeWidth="3" />        </svg>    )}

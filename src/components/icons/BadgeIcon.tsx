@@ -1,0 +1,1 @@
+export function BadgeIcon() {    return (        <svg viewBox="0 0 64 64" className="w-full h-full">            <circle cx="32" cy="24" r="14" fill="none" stroke="currentColor" strokeWidth="3" />            <path d="M24 38l-6 18 14-8 14 8-6-18" fill="none" stroke="currentColor" strokeWidth="3" />        </svg>    )}

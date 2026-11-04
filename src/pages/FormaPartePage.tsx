@@ -1,0 +1,1 @@
+import React from 'react';const FormaPartePage: React.FC = () => {    return (        <div>            <h1>Forma parte</h1>            <p>Contenido de la página de Forma parte.</p>        </div>    );};export default FormaPartePage;

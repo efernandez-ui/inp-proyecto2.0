@@ -1,0 +1,1 @@
+export function AutomationIcon() {    return (        <svg viewBox="0 0 64 64" className="w-full h-full">            <circle cx="32" cy="32" r="10" fill="none" stroke="currentColor" strokeWidth="3" />            <path d="M32 6v10M32 48v10M6 32h10M48 32h10" stroke="currentColor" strokeWidth="3" />        </svg>    )}

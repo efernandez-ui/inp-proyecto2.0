@@ -1,0 +1,1 @@
+export function PaymentIcon() {    return (        <svg viewBox="0 0 64 64" className="w-full h-full">            <rect x="8" y="18" width="48" height="28" rx="4" fill="none" stroke="currentColor" strokeWidth="3" />            <line x1="8" y1="28" x2="56" y2="28" stroke="currentColor" strokeWidth="3" />        </svg>    )}
