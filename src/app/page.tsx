@@ -1,7 +1,7 @@
 'use client';
 import { useSelector } from 'react-redux';
 import { RootState } from '../store';
-import HeroCarousel from '@/components/home/HeroCarousel'
+import HeroVideo from '@/components/home/HeroVideo'
 import BusinessValueSection from '@/components/home/BusinessValueSection'
 import DistributionSection from '@/components/home/DistributionSection'
 import ServicesSection from '@/components/home/ServicesSection'
@@ -15,7 +15,7 @@ export default function HomePage() {
   }
   return (
     <>
-      <HeroCarousel />
+      <HeroVideo />
       <PortalInfoSection
         title="Somos el Portal web"
         description="Con el catálogo más completo del mercado, herramientas de autogestión para agilizar los negocios y una experiencia de compra profesional."

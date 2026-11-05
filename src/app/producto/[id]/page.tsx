@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { getProductById, fetchSustitutos, fetchRelacionados } from '@/services/products'
-import { ProductoDTO, AplicacionDTO } from '@/interfaces/producto'
+import { ProductoDTO, AplicacionDTO, ImagenUrlDTO } from '@/interfaces/producto'
 import ProductGalleryModal from '@/components/catalog/ProductGalleryModal'
 import ProductPools from '@/components/catalog/ProductPools'
 import AplicacionesMotocicletaModal from '@/components/catalog/AplicacionesMotocicletaModal'
@@ -20,7 +20,7 @@ import { favoriteKey, setFavoriteLocal, toggleFavorite } from '@/store/favorites
 import { ProductUI } from '@/models/ProductUI'
 import { unidadPresentacionLabel, pesoPresentacionLabel } from '@/utils/productPresentacionLabels'
 import { toast } from 'react-toastify'
-import { ArrowLeft, ArrowRight, Bike, Heart, Link2, Loader2, Play, RotateCcw, ShoppingCart, Trash2 } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Bike, Calculator, Heart, Link2, Loader2, Play, RotateCcw, Search, ShoppingCart, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
 import OfertaPrecioDisplay from '@/components/catalog/OfertaPrecioDisplay'
 import DescuentoCornerBadges from '@/components/catalog/DescuentoCornerBadges'
@@ -30,9 +30,31 @@ import { resolvePreciosMoneda, calcularPrecioPublico, tienePrecioListaVisible } 
 import { isProductoNuevo } from '@/utils/productoNuevo'
 import { isValidProductImageUrl, PRODUCT_PLACEHOLDER, PRODUCT_PLACEHOLDER_SMALL } from '@/utils/productImage'
 import BranchStockDisplay from '@/components/catalog/BranchStockDisplay'
+import Modal from '@/components/modals/Modal'
 import { CART_READONLY_CODE } from '@/services/cart'
 
 type VideoSlide = { url: string; poster?: string }
+
+function youtubeThumbnail(url: string): string | undefined {
+    try {
+        const parsed = new URL(url)
+        const host = parsed.hostname.toLowerCase().replace(/^(www\.|m\.)/, '')
+        let id: string | undefined
+        if (host === 'youtu.be') {
+            id = parsed.pathname.split('/')[1]
+        } else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+            const segments = parsed.pathname.split('/').filter(Boolean)
+            id = segments[0] === 'watch'
+                ? parsed.searchParams.get('v') || undefined
+                : ['embed', 'shorts', 'live', 'v'].includes(segments[0]) ? segments[1] : undefined
+        }
+        return id && /^[\w-]{11}$/.test(id)
+            ? `https://img.youtube.com/vi/${id}/hqdefault.jpg`
+            : undefined
+    } catch {
+        return undefined
+    }
+}
 
 function buildVideoSlides(product: ProductoDTO): VideoSlide[] {
     const raw = product.videos
@@ -41,13 +63,13 @@ function buildVideoSlides(product: ProductoDTO): VideoSlide[] {
     for (const item of raw) {
         if (typeof item === 'string') {
             const u = item.trim()
-            if (u) out.push({ url: u })
+            if (u) out.push({ url: u, poster: youtubeThumbnail(u) })
         } else if (item && typeof item === 'object') {
             const o = item as Record<string, string | null | undefined>
             const url = String(o.url || o.path || '').trim()
             if (url) {
                 const posterRaw = o.thumbnailUrl || o.poster
-                const poster = typeof posterRaw === 'string' && posterRaw.trim() ? posterRaw.trim() : undefined
+                const poster = youtubeThumbnail(url) || (typeof posterRaw === 'string' && posterRaw.trim() ? posterRaw.trim() : undefined)
                 out.push({ url, poster })
             }
         }
@@ -72,6 +94,55 @@ function normalizeNullableText(value: unknown): string | null {
 /** Nombre del atributo como en USR_PRATRI (mayúsculas, acentos y unidades), solo cambia "_" por espacio. */
 function formatAttributeLabel(key: string): string {
     return key.replace(/_+/g, ' ').trim()
+}
+
+type ApplicationRow = {
+    app: AplicacionDTO
+    marcaSpan: number
+    modeloSpan: number
+    cilindradaSpan: number
+}
+
+function buildApplicationRows(applications: AplicacionDTO[]): ApplicationRow[] {
+    const sorted = [...applications].sort((a, b) =>
+        (a.marca ?? '').localeCompare(b.marca ?? '', 'es') ||
+        (a.modelo ?? '').localeCompare(b.modelo ?? '', 'es') ||
+        (a.cilindrada ?? '').localeCompare(b.cilindrada ?? '', 'es', { numeric: true }) ||
+        (a.version ?? '').localeCompare(b.version ?? '', 'es')
+    )
+    const rows = sorted.map((app) => ({ app, marcaSpan: 0, modeloSpan: 0, cilindradaSpan: 0 }))
+
+    for (let marcaStart = 0; marcaStart < sorted.length;) {
+        let marcaEnd = marcaStart + 1
+        while (marcaEnd < sorted.length && sorted[marcaEnd].marca === sorted[marcaStart].marca) marcaEnd++
+        rows[marcaStart].marcaSpan = marcaEnd - marcaStart
+
+        for (let modeloStart = marcaStart; modeloStart < marcaEnd;) {
+            let modeloEnd = modeloStart + 1
+            while (modeloEnd < marcaEnd && sorted[modeloEnd].modelo === sorted[modeloStart].modelo) modeloEnd++
+            rows[modeloStart].modeloSpan = modeloEnd - modeloStart
+
+            for (let ccStart = modeloStart; ccStart < modeloEnd;) {
+                let ccEnd = ccStart + 1
+                while (ccEnd < modeloEnd && sorted[ccEnd].cilindrada === sorted[ccStart].cilindrada) ccEnd++
+                rows[ccStart].cilindradaSpan = ccEnd - ccStart
+                ccStart = ccEnd
+            }
+            modeloStart = modeloEnd
+        }
+        marcaStart = marcaEnd
+    }
+
+    return rows
+}
+
+function ProductInfoRow({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="grid grid-cols-[100px_minmax(0,1fr)] border-b border-gray-100 py-2 last:border-b-0">
+            <span className="min-w-0 [overflow-wrap:anywhere] text-[11px] font-medium uppercase leading-4 tracking-wide text-slate-400">{label}:</span>
+            <span className="min-w-0 break-words pl-2 text-xs leading-4 text-slate-900">{value}</span>
+        </div>
+    )
 }
 
 function isYoutubeEmbedUrl(url: string | undefined): boolean {
@@ -113,6 +184,7 @@ export default function ProductDetailPage() {
     const [tippro, artcod] = parseId(id || '')
 
     const [product, setProduct] = useState<ProductoDTO | null>(null)
+    const [fetchedImages, setFetchedImages] = useState<{ key: string; images: (ImagenUrlDTO | string)[] } | null>(null)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [showGallery, setShowGallery] = useState(false)
@@ -126,11 +198,12 @@ export default function ProductDetailPage() {
     const favoritesKeys = useSelector((state: RootState) => state.favorites.keys)
     const dispatch = useDispatch<AppDispatch>()
     const { currency, setCurrency } = useCurrency()
-    const { markupPercentage, showPurchasePrice, showPublicPrice } = useCatalogUI()
+    const { markupPercentage, showPurchasePrice, showPublicPrice, togglePurchasePrice, togglePublicPrice, setMarkupPercentage } = useCatalogUI()
     const [isAdding, setIsAdding] = useState(false)
     const [isRemoving, setIsRemoving] = useState(false)
     const [aplicacionesModalOpen, setAplicacionesModalOpen] = useState(false)
     const [selectedMediaIndex, setSelectedMediaIndex] = useState(0)
+    const [showMarkupWarning, setShowMarkupWarning] = useState(false)
 
     // Verificar si el producto ya está en el carrito
     const cartItem = cartItems.find(item =>
@@ -300,6 +373,31 @@ export default function ProductDetailPage() {
 
     useEffect(() => {
         if (!tippro || !artcod) return
+        const controller = new AbortController()
+        const key = `${tippro}-${artcod}`
+
+        const fetchImages = async () => {
+            try {
+                const response = await fetch(
+                    `${process.env.NEXT_PUBLIC_API_BACKEND}/api/public/productos/${encodeURIComponent(tippro)}/${encodeURIComponent(artcod)}/imagenes`,
+                    { signal: controller.signal }
+                )
+                if (!response.ok) return
+                const result: unknown = await response.json()
+                if (Array.isArray(result)) {
+                    setFetchedImages({ key, images: result as (ImagenUrlDTO | string)[] })
+                }
+            } catch (error) {
+                if (!controller.signal.aborted) console.error('Error loading product images:', error)
+            }
+        }
+
+        void fetchImages()
+        return () => controller.abort()
+    }, [tippro, artcod])
+
+    useEffect(() => {
+        if (!tippro || !artcod) return
         const effectiveNrocta = urlNrocta || selectedClient?.nrocta || undefined
         let cancelled = false
         setSustitutos([])
@@ -354,7 +452,30 @@ export default function ProductDetailPage() {
         return imagesArray
     }
 
-    const images = buildImagesArray(product)
+    const imageKey = `${tippro}-${artcod}`
+    const endpointImages = fetchedImages?.key === imageKey ? fetchedImages.images : []
+    const detailImages = buildImagesArray(product)
+    const normalizedEndpointImages = endpointImages.flatMap((image) => {
+        if (!image) return []
+        const small = typeof image === 'string' ? image : image.pathImagenChica
+        const large = typeof image === 'string' ? image : image.pathImagenGrande || image.pathImagenChica
+        if (!isValidProductImageUrl(large)) return []
+        return [{
+            pathImagenChica: getImageWithFallback(small || large),
+            pathImagenGrande: large.replace('_min.jpg', '.jpg'),
+        }]
+    })
+    const primaryImage = isValidProductImageUrl(product.imgchi)
+        ? { pathImagenChica: product.imgchi, pathImagenGrande: getImageWithFallback(product.imggra || product.imgchi, true).replace('_min.jpg', '.jpg') }
+        : null
+    const endpointWithPrimary = primaryImage && !normalizedEndpointImages.some((image) => image.pathImagenGrande === primaryImage.pathImagenGrande)
+        ? [primaryImage, ...normalizedEndpointImages]
+        : normalizedEndpointImages
+    const images = normalizedEndpointImages.length > 0
+        ? endpointWithPrimary.filter((image, index, all) =>
+            all.findIndex((other) => other.pathImagenGrande === image.pathImagenGrande) === index
+        )
+        : detailImages
     const videoSlides = buildVideoSlides(product)
     const mediaSlides: MediaSlide[] = [
         ...images.map((_, imageIndex) => ({ kind: 'image' as const, imageIndex })),
@@ -506,8 +627,9 @@ export default function ProductDetailPage() {
     const aplicacionesFiltradas = (() => {
         const query = normalizeTextValue(aplicacionesQuery).toLowerCase()
         if (!query) return aplicacionesNormalizadas
+        const words = query.split(/\s+/).filter(Boolean)
         return aplicacionesNormalizadas.filter((app) =>
-            [
+            words.every((word) => [
                 app.marca,
                 app.modelo,
                 app.version,
@@ -518,9 +640,10 @@ export default function ProductDetailPage() {
             ]
                 .map((value) => normalizeTextValue(value).toLowerCase())
                 .join(' ')
-                .includes(query)
+                .includes(word))
         )
     })()
+    const applicationRows = buildApplicationRows(aplicacionesFiltradas)
     const caracteristicasEntries = [
         { label: 'Tipo de producto', value: product.tipo },
         { label: 'Sub-tipo', value: product.subtipo },
@@ -597,9 +720,9 @@ export default function ProductDetailPage() {
                                                 className="w-full h-full object-cover"
                                             />
                                         ) : (
-                                            <div className="relative w-full h-full bg-gray-900 flex items-center justify-center">
+                                            <div className="relative w-full h-full bg-black flex items-center justify-center">
                                                 {slide.poster ? (
-                                                    <img src={slide.poster} alt="" className="absolute inset-0 w-full h-full object-cover opacity-80" />
+                                                    <img src={slide.poster} alt="" className="absolute inset-0 w-full h-full object-cover" />
                                                 ) : null}
                                                 <Play className="w-7 h-7 text-white drop-shadow-md relative z-[1]" fill="currentColor" />
                                             </div>
@@ -717,9 +840,9 @@ export default function ProductDetailPage() {
                                                     className="w-full h-full object-cover"
                                                 />
                                             ) : (
-                                                <div className="relative w-full h-full bg-gray-900 flex items-center justify-center">
+                                                <div className="relative w-full h-full bg-black flex items-center justify-center">
                                                     {slide.poster ? (
-                                                        <img src={slide.poster} alt="" className="absolute inset-0 w-full h-full object-cover opacity-80" />
+                                                        <img src={slide.poster} alt="" className="absolute inset-0 w-full h-full object-cover" />
                                                     ) : null}
                                                     <Play className="w-6 h-6 text-white relative z-[1]" fill="currentColor" />
                                                 </div>
@@ -728,7 +851,6 @@ export default function ProductDetailPage() {
                                     ))}
                                 </div>
 
-                                <p className="mt-4 text-center text-[10px] font-semibold tracking-[0.2em] text-gray-400 uppercase">e-biz INTERCAP</p>
                             </div>
                         </div>
                     </div>
@@ -798,35 +920,65 @@ export default function ProductDetailPage() {
                             )}
 
                             {isLoggedIn && (
-                                <div className="flex items-center justify-end mb-4">
-                                    <span className="text-[10px] text-gray-400 mr-2 font-bold uppercase">Moneda:</span>
-                                    <div className="flex bg-gray-100 rounded-lg p-0.5">
-                                        <button
-                                            type="button"
-                                            onClick={() => setCurrency('ARS')}
-                                            className={clsx(
-                                                'px-3 py-1 text-[10px] font-bold rounded transition-colors',
-                                                currency === 'ARS' ? 'bg-[#001f3f] text-white' : 'text-gray-500 hover:text-gray-700'
-                                            )}
-                                        >
-                                            ARS
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => setCurrency('USD')}
-                                            className={clsx(
-                                                'px-3 py-1 text-[10px] font-bold rounded transition-colors',
-                                                currency === 'USD' ? 'bg-[#001f3f] text-white' : 'text-gray-500 hover:text-gray-700'
-                                            )}
-                                        >
-                                            USD
-                                        </button>
+                                <div className="mb-4 flex flex-wrap items-center gap-3 border-y border-gray-100 py-3 sm:gap-4">
+                                    <label className="flex cursor-pointer items-center gap-2 whitespace-nowrap">
+                                        <input
+                                            type="checkbox"
+                                            checked={showPurchasePrice}
+                                            onChange={togglePurchasePrice}
+                                            className="h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-700">Precio Compra</span>
+                                    </label>
+                                    <label className="flex cursor-pointer items-center gap-2 whitespace-nowrap">
+                                        <input
+                                            type="checkbox"
+                                            checked={showPublicPrice}
+                                            onChange={() => {
+                                                if (!showPublicPrice && markupPercentage <= 0) {
+                                                    setShowMarkupWarning(true)
+                                                } else {
+                                                    togglePublicPrice()
+                                                }
+                                            }}
+                                            className="h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-700">Precio Público</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 rounded bg-gray-100 px-3 py-1.5" title="Porcentaje de aumento para el precio público">
+                                        <Calculator size={14} className="text-gray-500" />
+                                        <span className="sr-only">Porcentaje de precio público</span>
+                                        <input
+                                            type="number"
+                                            value={markupPercentage}
+                                            onChange={(e) => setMarkupPercentage(Number(e.target.value))}
+                                            className="w-12 bg-transparent text-right text-sm font-medium text-gray-900 focus:outline-none"
+                                            min="0"
+                                            max="100"
+                                            aria-label="Porcentaje de precio público"
+                                        />
+                                    </label>
+                                    <div className="flex rounded-lg bg-gray-100 p-0.5" role="group" aria-label="Moneda">
+                                        {(['ARS', 'USD'] as const).map((value) => (
+                                            <button
+                                                key={value}
+                                                type="button"
+                                                onClick={() => setCurrency(value)}
+                                                aria-pressed={currency === value}
+                                                className={clsx(
+                                                    'rounded px-3 py-1 text-xs font-bold transition-colors',
+                                                    currency === value ? 'bg-[#001f3f] text-white' : 'text-gray-500 hover:text-gray-700'
+                                                )}
+                                            >
+                                                {value}
+                                            </button>
+                                        ))}
                                     </div>
                                 </div>
                             )}
 
                             {isLoggedIn ? (
-                                <div className="pt-3 border-t border-gray-100 space-y-3 mb-6">
+                                <div className="space-y-3 mb-6">
                                     {showPurchasePrice && (
                                         showPrecioPromocional ? (
                                             <OfertaPrecioDisplay
@@ -853,7 +1005,7 @@ export default function ProductDetailPage() {
                                             </div>
                                         )
                                     )}
-                                    {tienePrecioListaVisible(precioListaMostrar, precioVentaUnitario) && !showPrecioPromocional && (
+                                    {showPurchasePrice && tienePrecioListaVisible(precioListaMostrar, precioVentaUnitario) && !showPrecioPromocional && (
                                         <p className="text-[10px] text-gray-400 font-bold uppercase">
                                             Precio lista:{' '}
                                             <span className="line-through text-gray-400 font-semibold normal-case text-sm">
@@ -911,7 +1063,7 @@ export default function ProductDetailPage() {
                                         stockNea={product.stockNea}
                                         stockBue={product.stockBue}
                                         stockCuy={product.stockCuy}
-                                        variant="table"
+                                        variant="compact"
                                     />
                                     {(() => {
                                         const raw = (product as { proximoIngreso?: string | null }).proximoIngreso;
@@ -990,10 +1142,10 @@ export default function ProductDetailPage() {
                 </div>
             </div>
 
-            <section className="mt-8 bg-white rounded-xl shadow-sm border border-gray-100 p-6 lg:p-8">
-                <h2 className="text-3xl font-extrabold text-gray-900 mb-4">Descripción</h2>
-                <p className="text-gray-700 text-sm leading-7">{product.descripcion}</p>
-                <div className="mt-4 text-sm text-gray-600 leading-7">
+            <section className="mt-8 rounded-md border border-gray-200 bg-white p-6 shadow-sm lg:p-8">
+                <h2 className="mb-4 text-[22px] font-bold text-slate-900">Descripción</h2>
+                <p className="text-gray-700 text-xs leading-5">{product.descripcion}</p>
+                <div className="mt-4 text-xs text-gray-600 leading-5">
                     <p>
                         Este producto forma parte del catálogo técnico INTERCAP. Verifique compatibilidad por medida, uso y
                         aplicación antes de realizar la compra.
@@ -1001,36 +1153,44 @@ export default function ProductDetailPage() {
                 </div>
             </section>
 
-            <section className="mt-6 grid grid-cols-1 xl:grid-cols-2 gap-6">
-                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 lg:p-6">
-                    <h3 className="text-lg font-medium text-gray-700 mb-4 border-b pb-2">
-                        Aplicaciones por Motocicleta
-                    </h3>
-                    <input
-                        type="search"
-                        value={aplicacionesQuery}
-                        onChange={(e) => setAplicacionesQuery(e.target.value)}
-                        placeholder="Buscar por marca, modelo o cilindrada..."
-                        className="w-full rounded-lg border border-gray-200 px-4 py-2.5 text-sm text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
-                    />
-                    <div className="mt-4 border border-gray-200 rounded-lg overflow-hidden">
+            <section className="product-details-grid mt-6 items-stretch gap-6">
+                <div className="flex min-w-0 flex-col overflow-hidden rounded-md border border-gray-200 bg-white shadow-sm">
+                    <div className="shrink-0 border-b border-gray-100 bg-slate-50 px-5 py-5">
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                            <h3 className="text-[22px] font-bold text-slate-900">Aplicaciones por Motocicleta</h3>
+                            <span className="rounded border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-slate-600">
+                                {aplicacionesNormalizadas.length} compatibilidades
+                            </span>
+                        </div>
+                        <div className="relative">
+                            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                            <input
+                                type="search"
+                                value={aplicacionesQuery}
+                                onChange={(e) => setAplicacionesQuery(e.target.value)}
+                                placeholder="Buscar por marca (ej. Honda), modelo (ej. Titan) o cilindrada (150)..."
+                                className="w-full rounded-md border border-gray-300 bg-white py-2.5 pl-9 pr-3 text-xs text-gray-800 shadow-sm placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                            />
+                        </div>
+                    </div>
+                    <div className="min-w-0 flex-1">
                         {aplicacionesNormalizadas.length === 0 ? (
-                            <div className="p-8 text-center text-sm text-gray-500">
+                            <div className="p-8 text-center text-xs text-gray-500">
                                 No hay aplicaciones cargadas para este producto.
                             </div>
                         ) : aplicacionesFiltradas.length === 0 ? (
-                            <div className="p-8 text-center text-sm text-gray-500">
+                            <div className="p-8 text-center text-xs text-gray-500">
                                 No hay resultados para &ldquo;{normalizeTextValue(aplicacionesQuery)}&rdquo;.
                             </div>
                         ) : (
-                            <div className="overflow-auto max-h-[520px]">
-                                <table className="w-full text-sm border-collapse">
-                                    <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_rgb(229,231,235)]">
+                            <div className="max-h-[600px] overflow-auto">
+                                <table className="w-full min-w-[620px] border-collapse bg-white text-xs">
+                                    <thead className="sticky top-0 z-10 bg-white text-[11px] uppercase text-slate-900">
                                         <tr>
                                             {(['Marca', 'Modelo', 'Cilindrada', 'Versión', 'Desde', 'Hasta'] as const).map((h) => (
                                                 <th
                                                     key={h}
-                                                    className="text-center font-bold text-gray-700 text-sm px-2 py-2 border-b border-gray-200 bg-gray-50/95"
+                                                    className="border-b border-r border-gray-200 px-3 py-3 text-left font-bold last:border-r-0"
                                                 >
                                                     {h}
                                                 </th>
@@ -1038,14 +1198,28 @@ export default function ProductDetailPage() {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {aplicacionesFiltradas.map((app, idx) => (
-                                            <tr key={`${app.marca}-${app.modelo}-${app.cilindrada}-${idx}`} className="border-b border-gray-200 hover:bg-gray-50/80">
-                                                <td className="align-middle text-center p-2 text-gray-900 font-medium border-r border-gray-100">{app.marca || '—'}</td>
-                                                <td className="align-middle text-center p-2 text-gray-800 border-r border-gray-100">{app.modelo || '—'}</td>
-                                                <td className="align-middle text-center p-2 text-gray-800 border-r border-gray-100">{app.cilindrada || '—'}</td>
-                                                <td className="align-middle text-center p-2 text-gray-800 border-r border-gray-100">{app.version || '—'}</td>
-                                                <td className="align-middle text-center p-2 text-gray-800 tabular-nums">{app.adesde || '—'}</td>
-                                                <td className="align-middle text-center p-2 text-gray-800 tabular-nums">{app.ahasta || '—'}</td>
+                                        {applicationRows.map(({ app, marcaSpan, modeloSpan, cilindradaSpan }, idx) => (
+                                            <tr key={`${app.marca}-${app.modelo}-${app.cilindrada}-${app.version}-${idx}`} className="border-b border-gray-200 bg-white">
+                                                {marcaSpan > 0 && (
+                                                    <td rowSpan={marcaSpan} className="border-r border-gray-200 bg-white px-3 py-2 align-middle font-bold uppercase text-slate-900">
+                                                        {app.marca || '—'}
+                                                    </td>
+                                                )}
+                                                {modeloSpan > 0 && (
+                                                    <td rowSpan={modeloSpan} className="border-r border-gray-200 bg-white px-3 py-2 align-middle font-semibold uppercase text-slate-900">
+                                                        {app.modelo || '—'}
+                                                    </td>
+                                                )}
+                                                {cilindradaSpan > 0 && (
+                                                    <td rowSpan={cilindradaSpan} className="border-r border-gray-200 bg-white px-3 py-2 text-center align-middle font-semibold text-slate-900">
+                                                        {app.cilindrada ? `${app.cilindrada}${/cc\b/i.test(app.cilindrada) ? '' : ' cc'}` : '—'}
+                                                    </td>
+                                                )}
+                                                <td className="border-r border-gray-200 px-3 py-2 text-slate-900">
+                                                    {app.version && app.version !== '-' && app.version.toLowerCase() !== 'base' ? app.version : <span className="italic text-slate-400">Base</span>}
+                                                </td>
+                                                <td className="border-r border-gray-200 px-3 py-2 text-center font-mono text-slate-900">{app.adesde || '—'}</td>
+                                                <td className="px-3 py-2 text-center font-mono text-slate-900">{app.ahasta || '—'}</td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -1056,49 +1230,41 @@ export default function ProductDetailPage() {
                 </div>
 
                 <div className="space-y-6">
-                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 lg:p-6">
-                        <h3 className="text-lg font-medium text-gray-700 mb-4 border-b pb-2">Atributos</h3>
+                    <div className="rounded-md border border-gray-200 bg-white p-5 shadow-sm lg:p-6">
+                        <div className="mb-4 flex items-center justify-between border-b border-gray-100 pb-3">
+                            <h3 className="text-[22px] font-bold text-slate-900">Atributos</h3>
+                        </div>
                         {atributosEntries.length > 0 ? (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
-                                <div className="space-y-2">
+                            <div className="product-attributes-columns">
+                                <div>
                                     {atributosCol1.map((attr) => (
-                                        <div key={attr.key} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 text-sm py-1">
-                                            <span className="uppercase text-xs text-gray-500">{attr.label}:</span>
-                                            <span className="font-medium text-gray-800">{attr.value}</span>
-                                        </div>
+                                        <ProductInfoRow key={attr.key} label={attr.label} value={attr.value} />
                                     ))}
                                 </div>
-                                <div className="space-y-2 md:border-l md:border-gray-200 md:pl-6">
+                                <div className="md:border-l md:border-gray-200 md:pl-4 lg:pl-6">
                                     {atributosCol2.map((attr) => (
-                                        <div key={attr.key} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 text-sm py-1">
-                                            <span className="uppercase text-xs text-gray-500">{attr.label}:</span>
-                                            <span className="font-medium text-gray-800">{attr.value}</span>
-                                        </div>
+                                        <ProductInfoRow key={attr.key} label={attr.label} value={attr.value} />
                                     ))}
                                 </div>
                             </div>
                         ) : (
-                            <p className="text-sm text-gray-500 italic">No hay atributos técnicos cargados.</p>
+                            <p className="text-xs text-gray-500 italic">No hay atributos técnicos cargados.</p>
                         )}
                     </div>
 
-                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 lg:p-6">
-                        <h3 className="text-lg font-medium text-gray-700 mb-4 border-b pb-2">Características</h3>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
-                            <div className="space-y-2">
+                    <div className="rounded-md border border-gray-200 bg-white p-5 shadow-sm lg:p-6">
+                        <div className="mb-4 flex items-center justify-between border-b border-gray-100 pb-3">
+                            <h3 className="text-[22px] font-bold text-slate-900">Características</h3>
+                        </div>
+                        <div className="grid grid-cols-1 gap-x-4 md:grid-cols-2">
+                            <div>
                                 {caracteristicasCol1.map((item) => (
-                                    <div key={item.label} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 text-sm py-1">
-                                        <span className="capitalize text-gray-500">{item.label}:</span>
-                                        <span className="font-medium text-gray-800">{item.value}</span>
-                                    </div>
+                                    <ProductInfoRow key={item.label} label={item.label} value={normalizeTextValue(item.value)} />
                                 ))}
                             </div>
-                            <div className="space-y-2 md:border-l md:border-gray-200 md:pl-6">
+                            <div className="md:border-l md:border-gray-200 md:pl-4">
                                 {caracteristicasCol2.map((item) => (
-                                    <div key={item.label} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 text-sm py-1">
-                                        <span className="capitalize text-gray-500">{item.label}:</span>
-                                        <span className="font-medium text-gray-800">{item.value}</span>
-                                    </div>
+                                    <ProductInfoRow key={item.label} label={item.label} value={normalizeTextValue(item.value)} />
                                 ))}
                             </div>
                         </div>
@@ -1108,17 +1274,34 @@ export default function ProductDetailPage() {
 
             {sustitutos.length > 0 && (
                 <section className="mt-6 bg-white rounded-xl shadow-sm border border-gray-100 p-6 lg:p-8">
-                    <h2 className="text-3xl font-extrabold text-gray-900 mb-4">Sustitutos</h2>
+                    <h2 className="mb-4 text-[22px] font-bold text-slate-900">Sustitutos</h2>
                     <ProductVinculadosGrid products={sustitutos} embeddedInVinculados />
                 </section>
             )}
 
             {relacionados.length > 0 && (
                 <section className="mt-6 bg-white rounded-xl shadow-sm border border-gray-100 p-6 lg:p-8">
-                    <h2 className="text-3xl font-extrabold text-gray-900 mb-4">Relacionados</h2>
+                    <h2 className="mb-4 text-[22px] font-bold text-slate-900">Relacionados</h2>
                     <ProductVinculadosGrid products={relacionados} embeddedInVinculados />
                 </section>
             )}
+
+            <Modal isOpen={showMarkupWarning} onClose={() => setShowMarkupWarning(false)} contentClassName="w-full max-w-md rounded-lg bg-white shadow-xl">
+                <div className="p-6">
+                    <h3 className="mb-2 text-center text-xl font-bold text-gray-900">Markup no configurado</h3>
+                    <p className="mb-5 text-center text-sm text-gray-600">
+                        Para mostrar el precio público, ingresá un porcentaje de markup.
+                    </p>
+                    <div className="flex gap-3">
+                        <button type="button" onClick={() => setShowMarkupWarning(false)} className="flex-1 rounded-lg bg-gray-200 px-4 py-2 font-bold text-gray-700 hover:bg-gray-300">
+                            Cancelar
+                        </button>
+                        <button type="button" onClick={() => { togglePublicPrice(); setShowMarkupWarning(false) }} className="flex-1 rounded-lg bg-[#001f3f] px-4 py-2 font-bold text-white hover:bg-[#003366]">
+                            Mostrar igual
+                        </button>
+                    </div>
+                </div>
+            </Modal>
 
             {showGallery && (
                 <ProductGalleryModal

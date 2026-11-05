@@ -136,6 +136,36 @@ body {
   scrollbar-width: none;
 }
 
+.product-details-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.product-attributes-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: 16px;
+}
+
+@media (min-width: 768px) {
+  .product-attributes-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .product-attributes-columns {
+    grid-template-columns: 285px 425px;
+    column-gap: 32px;
+  }
+}
+
+@media (min-width: 1536px) {
+  .product-details-grid {
+    grid-template-columns: minmax(620px, 1fr) 792px;
+  }
+}
+
 /* Scrollbar temática para el sidebar azul */
 .custom-scrollbar::-webkit-scrollbar {
   width: 4px;

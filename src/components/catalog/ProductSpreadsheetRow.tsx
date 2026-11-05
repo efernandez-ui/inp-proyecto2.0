@@ -66,8 +66,10 @@ function StockCell({
         : '—'
   return (
     <td className="border border-gray-200 px-0.5 py-1.5 text-center font-black text-slate-700" title={`Stock ${label}`}>
-      <span className="inline-flex max-w-full items-center justify-center gap-0.5 overflow-hidden">
-        <span className={`inline-block h-2 w-1.5 shrink-0 rounded-[1px] ${color}`} />
+      <span className="inline-flex max-w-full items-center justify-center gap-0.5">
+        <span className={`relative mt-0.5 inline-block h-2.5 w-2 shrink-0 rounded-[2px] ${color}`}>
+          <span className={`absolute -top-0.5 left-1/2 h-0.5 w-1 -translate-x-1/2 rounded-t-sm ${color}`} />
+        </span>
         <span className="truncate">{text}</span>
       </span>
     </td>

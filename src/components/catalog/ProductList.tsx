@@ -65,7 +65,7 @@ export default function ProductList({ data, currentPage, searchParams }: Props) 
 
     return (
         <>
-            <div className="flex justify-between items-center mb-4">
+            <div className="mb-4 flex min-h-10 items-center justify-between">
                 <div className="text-sm text-gray-600">
                     Mostrando {data.content.length} registros de {data.page?.totalElements || 0}
                 </div>

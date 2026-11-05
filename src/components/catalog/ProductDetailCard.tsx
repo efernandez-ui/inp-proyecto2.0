@@ -591,7 +591,7 @@ export default function ProductDetailCard({ product }: { product: ProductUI }) {
                                             stockNea={product.stockNea}
                                             stockBue={product.stockBue}
                                             stockCuy={product.stockCuy}
-                                            variant="table"
+                                            variant="compact"
                                         />
                                         {(() => {
                                             const raw = product.proximoIngreso;

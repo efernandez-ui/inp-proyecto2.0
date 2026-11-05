@@ -533,9 +533,9 @@ export default function CatalogHeader({ totalProducts, currentPage, pageSize }: 
             {/* ===== FRANJA SUPERIOR: BUSCADOR DE MOTOS ===== */}
             <div className="bg-[#001f3f] text-white px-4 py-3">
                 <div className="max-w-7xl mx-auto">
-                    <h2 className="text-sm font-bold tracking-wide mb-3">BUSCADOR POR MOTO</h2>
-
-                    <div className="flex flex-wrap gap-2 items-center">
+                    <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:gap-6">
+                        <h2 className="shrink-0 whitespace-nowrap text-sm font-bold tracking-wide">BUSCADOR POR MOTO</h2>
+                        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                         {/* Select Fabricante */}
                         <select
                             value={filters.fabricante}
@@ -660,6 +660,7 @@ export default function CatalogHeader({ totalProducts, currentPage, pageSize }: 
                             <Trash2 size={12} />
                             Borrar todo
                         </button>
+                        </div>
                     </div>
                 </div>
             </div>

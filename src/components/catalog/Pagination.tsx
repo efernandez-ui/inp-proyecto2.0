@@ -31,14 +31,14 @@ export default function Pagination({
 
     return (
         <nav
-            className="flex justify-center mt-10"
+            className="flex justify-center"
             aria-label="Paginación"
         >
-            <div className="flex items-center gap-1 rounded-[10px] bg-white shadow-sm border border-gray-200 px-2 py-1">
+            <div className="flex items-center gap-1 rounded-[10px] bg-white shadow-sm border border-gray-200 px-2 py-0.5">
                 {showPrev && (
                     <Link
                         href={buildHref(currentPage - 1)}
-                        className="px-3 py-2 rounded-[10px] text-[#001f3f] hover:bg-[#001f3f]/10 transition"
+                        className="px-3 py-1.5 rounded-[10px] text-sm text-[#001f3f] hover:bg-[#001f3f]/10 transition"
                         aria-label="Página anterior"
                     >
                         ←
@@ -53,7 +53,7 @@ export default function Pagination({
                             href={buildHref(page)}
                             aria-current={isActive ? 'page' : undefined}
                             className={`
-                px-4 py-2 rounded-[10px] text-sm font-medium transition
+                px-4 py-1.5 rounded-[10px] text-sm font-medium transition
                 ${isActive
                                     ? 'bg-[#001f3f] text-white shadow'
                                     : 'text-[#001f3f] hover:bg-[#001f3f]/10'
@@ -68,7 +68,7 @@ export default function Pagination({
                 {showNext && (
                     <Link
                         href={buildHref(currentPage + 1)}
-                        className="px-3 py-2 rounded-[10px] text-[#001f3f] hover:bg-[#001f3f]/10 transition"
+                        className="px-3 py-1.5 rounded-[10px] text-sm text-[#001f3f] hover:bg-[#001f3f]/10 transition"
                         aria-label="Página siguiente"
                     >
                         →

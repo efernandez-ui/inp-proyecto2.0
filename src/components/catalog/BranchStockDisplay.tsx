@@ -5,6 +5,7 @@ import {
   resolveStockBatteryClass,
 } from '@/utils/stockBattery';
 import { stockCantidadCell, stockDisplayForUser } from '@/utils/stockDisplay';
+import StockItem from './StockItem';
 
 type StockRow = { sucursal?: string; cantidad?: unknown; estado?: string | null };
 
@@ -16,7 +17,7 @@ type Props = {
   stockNea?: unknown;
   stockBue?: unknown;
   stockCuy?: unknown;
-  /** Compact: batteries + qty under (cards). Full: Almc / batería / Cant. */
+  /** Compact: four batteries with quantities beside them. Full: Almc / batería / Cant. */
   variant?: 'compact' | 'table';
 };
 
@@ -42,32 +43,22 @@ export default function BranchStockDisplay({
     const display = stockDisplayForUser(userTipo, branch.cantidad, branch.estado, verStock);
     const color = resolveStockBatteryClass(branch.cantidad, branch.estado);
     const cant = stockCantidadCell(userTipo, branch.cantidad, branch.estado, verStock);
-    return { label, color, display, cant };
+    return { label, color, display, cant, stock: branch.cantidad, estado: branch.estado };
   });
 
   if (variant === 'compact') {
     return (
-      <div className="grid grid-cols-4 gap-1 py-2 px-1 bg-gray-50/50 rounded-xl border border-gray-50">
+      <div className="mb-4 grid grid-cols-4 gap-1 rounded-xl border border-slate-100 bg-slate-50 px-2 py-2">
         {rows.map((r) => (
-          <div
+          <StockItem
             key={r.label}
-            className="flex flex-col items-center gap-0.5"
-            title={
-              r.display.label.includes('Stock')
-                ? `${r.label}: ${r.display.label.replace(/^Stock:?\s*/i, '')}`
-                : `Stock ${r.label}: ${r.display.label}`
-            }
-          >
-            <span className="text-[8px] font-extrabold text-gray-400">{r.label}</span>
-            <div className={`w-3 h-4 rounded-[2px] ${r.color} relative shadow-inner`}>
-              <div className="absolute -top-0.5 left-1/2 -translate-x-1/2 w-1.5 h-0.5 bg-gray-200 rounded-full" />
-            </div>
-            {r.cant ? (
-              <span className="text-[9px] font-bold text-gray-600 tabular-nums leading-none">
-                {r.cant}
-              </span>
-            ) : null}
-          </div>
+            label={r.label}
+            stock={r.stock}
+            estado={r.estado}
+            userTipo={userTipo}
+            verStock={verStock}
+            variant="card"
+          />
         ))}
       </div>
     );
